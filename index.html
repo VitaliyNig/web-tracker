@@ -55,6 +55,16 @@
   .date-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);cursor:pointer}
   .title-label{font-weight:600;padding:6px 0;display:block;color:var(--card-fg)}
   .notes-label{display:block;margin-top:6px;font-size:14px;color:color-mix(in oklab,var(--card-fg) 85%,transparent);white-space:pre-wrap}
+
+  /* подсказка "Скопировано" */
+  .copyable{cursor:pointer;position:relative}
+  .copyable::after{
+    content:"Скопировано"; position:absolute; right:0; top:-10px; font-size:11px; color:var(--muted);
+    opacity:0; transform:translateY(-4px); transition:opacity .12s, transform .12s;
+    pointer-events:none;
+  }
+  .copyable[data-copied="1"]::after{opacity:1; transform:translateY(0)}
+
   .title-input,.notes-input{width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)}
   .title-input{padding:10px 12px;font-weight:600}
   .notes-input{margin-top:8px;min-height:60px;resize:vertical;padding:10px 12px}
@@ -150,7 +160,7 @@ const uid=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
 function button(text, onClick, title){const b=document.createElement('button');b.className='btn';b.textContent=text;if(title)b.title=title;b.onclick=onClick;return b;}
 function child(tag, cls, txt){const el=document.createElement(tag);if(cls)el.className=cls;if(txt!=null)el.textContent=txt;return el;}
 
-const STORAGE_KEY='siteTrackerData.v39.2';
+const STORAGE_KEY='siteTrackerData.v39.3';
 const FAV_KEY='siteTrackerFavColors.v1';
 
 /* dates */
@@ -220,12 +230,10 @@ function openModal(kind,targetId,opts={}){
   modal.open=true; modal.kind=kind; modal.targetId=targetId;
   modal.tempColor=opts.color||'#151923';
   modal.tempDate=normalizeISO(opts.date)||'';
-  modal.prevColor='';          // определим внутри модалки цвета
-  modal.committed=false;
+  modal.prevColor='';  modal.committed=false;
   renderModal();
 }
 function closeModal(){
-  // если модалка цвета закрывается без сохранения — откатываем предпросмотр
   if(modal.open && modal.kind==='pick-color' && !modal.committed){
     const node=findNode(modal.targetId);
     if(node) applyCardTheme(node.id, node.bg || null);
@@ -236,6 +244,24 @@ function closeModal(){
 modalClose.onclick=closeModal;
 overlay.addEventListener('click',e=>{if(e.target===overlay)closeModal();});
 window.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal.open)closeModal();});
+
+function copyText(text){
+  if(!text) return Promise.resolve();
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      return navigator.clipboard.writeText(text);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      return Promise.resolve();
+    }
+  }catch(e){ return Promise.reject(e); }
+}
+function flashCopied(el){
+  el.dataset.copied='1';
+  setTimeout(()=>{ el.removeAttribute('data-copied'); }, 800);
+}
 
 function renderModal(){
   if(!modal.open) return;
@@ -252,7 +278,7 @@ function renderModal(){
 
   if(modal.kind==='pick-color'){
     modalTitle.textContent='Выбор цвета карточки';
-    modal.prevColor = node.bg || ''; // запомним исходный цвет
+    modal.prevColor = node.bg || '';
 
     const row=document.createElement('div');row.style.display='flex';row.style.gap='10px';row.style.alignItems='center';
     const native=document.createElement('input');native.type='color';native.value=normalizeHex(node.bg || modal.tempColor);
@@ -381,6 +407,17 @@ function renderGroupAnchor(node, depth, filter, parentId){
   if(parentId) card.dataset.parent=parentId; else card.removeAttribute('data-parent');
   card.style.setProperty('--indent', `calc(${depth} * var(--indent-step))`);
   const item=document.createElement('div'); item.className='site-item'; card.appendChild(item);
+
+  /* делаем группу перетаскиваемой (якорь как ручка) */
+  card.draggable=true;
+  card.addEventListener('dragstart', e=>{
+    e.dataTransfer.setData('text/plain', node.id);
+    card.classList.add('dragging'); document.body.classList.add('dragging'); clearGapHover();
+  });
+  card.addEventListener('dragend', ()=>{
+    card.classList.remove('dragging'); document.body.classList.remove('dragging'); clearGapHover();
+  });
+
   return card;
 }
 
@@ -405,7 +442,7 @@ function renderItem(node, depth, filter, parentId, groupRoot){
     e.dataTransfer.setData('text/plain', node.id);
     card.classList.add('dragging');
     document.body.classList.add('dragging');
-    clearGapHover(); // старт — все зоны без dim
+    clearGapHover();
   });
   card.addEventListener('dragend', ()=>{
     card.classList.remove('dragging');
@@ -420,8 +457,12 @@ function renderItem(node, depth, filter, parentId, groupRoot){
 
   const main=document.createElement('div');
   if(!editing.has(node.id)){
-    const t=document.createElement('label'); t.className='title-label'; t.textContent=node.title||'Без названия';
-    const n=document.createElement('div'); n.className='notes-label'; n.textContent=node.notes||'';
+    const t=document.createElement('label'); t.className='title-label copyable'; t.textContent=node.title||'Без названия'; t.title='Нажмите, чтобы скопировать';
+    t.addEventListener('click', ()=>{ copyText(t.textContent).then(()=>flashCopied(t)); });
+
+    const n=document.createElement('div'); n.className='notes-label copyable'; n.textContent=node.notes||''; n.title='Нажмите, чтобы скопировать';
+    n.addEventListener('click', ()=>{ if(n.textContent) copyText(n.textContent).then(()=>flashCopied(n)); });
+
     main.append(t,n);
   }else{
     const ti=document.createElement('input'); ti.className='title-input'; ti.value=node.title||'';
@@ -537,6 +578,16 @@ function drawGroupBoxes(){
 
     const chip=document.createElement('div');chip.className='group-chip';chip.dataset.group=g.id;
     chip.style.left=g.anchorLeft+'px';chip.style.top=(g.anchorTop+18)+'px';
+
+    // делаем сам чип перетаскиваемым — удобно таскать группы
+    chip.draggable = true;
+    chip.addEventListener('dragstart', e=>{
+      e.dataTransfer.setData('text/plain', g.id);
+      document.body.classList.add('dragging'); clearGapHover();
+    });
+    chip.addEventListener('dragend', ()=>{
+      document.body.classList.remove('dragging'); clearGapHover();
+    });
 
     const btnToggle=document.createElement('button');btnToggle.className='chip-btn icon';btnToggle.textContent=node.collapsed?'▸':'▾';
     btnToggle.title=node.collapsed?'Развернуть':'Свернуть';
