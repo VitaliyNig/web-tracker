@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Трекер посещения сайтов</title>
+<style>
+  :root{
+    --bg:#0f1115; --bg-elev:#151923; --bg-hover:#1b2030; --text:#e6e9ef;
+    --muted:#a8b0bf; --accent:#6ea8ff; --border:#262c3a; --shadow:0 10px 30px rgba(0,0,0,.35);
+    --radius:14px; --radius-sm:10px; --indent-step:20px; --dropline:#3b82f6;
+    --stale15:#facc15; --stale30:#f97316; --stale60:#ef4444; --gap-dim:#515b6d;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Inter,Roboto,Arial}
+
+  /* Header */
+  .app-header{position:sticky;top:0;z-index:50;backdrop-filter:saturate(140%) blur(8px);
+    background:color-mix(in oklab,var(--bg) 86%,transparent);border-bottom:1px solid var(--border)}
+  .header-inner{max-width:1100px;margin:0 auto;padding:12px 16px;display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center}
+  .search input{width:100%;padding:12px 44px 12px 40px;border:1px solid var(--border);border-radius:var(--radius);
+    background:var(--bg-elev);color:var(--text)}
+  .btn{padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-elev);color:var(--text);
+    cursor:pointer;box-shadow:var(--shadow)}
+  .btn:hover{background:var(--bg-hover)} .btn.ghost{background:transparent;box-shadow:none}
+  .btn.icon{width:38px;min-width:38px;padding:10px 0;text-align:center}
+  .btn.icon.sm{width:28px;min-width:28px;padding:6px 0}
+  .btn.danger{border-color:#7a2e33;background:#2a1517}.btn.danger:hover{background:#351a1d}
+  .btn.primary{border-color:color-mix(in oklab,var(--accent) 35%,var(--border))}
+  .btn,.chip-btn,.group-chip,.title-label,.notes-label{color:var(--text)}
+
+  /* Layout */
+  .container{position:relative;max-width:1100px;margin:16px auto 100px;padding:0 16px 40px}
+  .hint{color:var(--muted);font-size:12px}
+
+  /* Cards */
+  .site-card{
+    position:relative; --card-fg:var(--text); border:1px solid var(--border); border-radius:var(--radius);
+    background:var(--bg-elev); margin-bottom:6px; overflow:hidden;
+    transition:background .2s,color .2s,transform .12s, box-shadow .12s; z-index:3;
+  }
+  .site-card:hover{transform:translateY(-1px)}
+  /* Подсветка «давно не был» — внутренняя рамка */
+  .site-card[data-stale="y15"]{box-shadow:inset 0 0 0 3px var(--stale15), var(--shadow)}
+  .site-card[data-stale="y30"]{box-shadow:inset 0 0 0 3px var(--stale30), var(--shadow)}
+  .site-card[data-stale="y60"]{box-shadow:inset 0 0 0 3px var(--stale60), var(--shadow)}
+  .site-card[data-stale="y15"] .date-input{box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--stale15) 70%, transparent)}
+  .site-card[data-stale="y30"] .date-input{box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--stale30) 70%, transparent)}
+  .site-card[data-stale="y60"] .date-input{box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--stale60) 70%, transparent)}
+
+  .site-item{padding:12px;display:flex;flex-direction:column;gap:10px}
+  .row{display:grid;grid-template-columns:140px 1fr auto;gap:10px;align-items:start}
+  @media (max-width:640px){.row{grid-template-columns:1fr}}
+  .date-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);cursor:pointer}
+  .title-label{font-weight:600;padding:6px 0;display:block;color:var(--card-fg)}
+  .notes-label{display:block;margin-top:6px;font-size:14px;color:color-mix(in oklab,var(--card-fg) 85%,transparent);white-space:pre-wrap}
+  .title-input,.notes-input{width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)}
+  .title-input{padding:10px 12px;font-weight:600}
+  .notes-input{margin-top:8px;min-height:60px;resize:vertical;padding:10px 12px}
+
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .actions-bottom{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;justify-content:space-between}
+  .actions-left,.actions-right{display:flex;gap:8px}
+  .actions-center{display:flex;gap:8px;justify-content:center;flex:1}
+
+  /* Overlay */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+  .overlay.open{display:flex}
+  .modal{width:min(720px,96vw);background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow)}
+  .modal-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .modal-body{padding:16px;display:grid;gap:12px}
+  .modal-actions{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+
+  /* Palette */
+  .color-section{display:grid;gap:8px}
+  .section-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .swatches{display:flex;flex-wrap:wrap;gap:8px}
+  .swatch{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+  .swatch:focus{outline:2px solid var(--dropline)}
+
+  /* Date modal */
+  .date-grid{display:grid;grid-template-columns:1fr;gap:10px}
+  .date-quick{display:flex;gap:8px;flex-wrap:wrap}
+
+  /* Indentation + vertical lines */
+  .flat{margin-left:var(--indent,0px)}
+  .section-line{position:absolute;width:2px;border-radius:2px;opacity:.95;pointer-events:none}
+
+  /* Group visuals */
+  .group-box{position:absolute;border:2px dashed var(--border);border-radius:12px;pointer-events:none}
+  .group-box.glow{border-color:var(--dropline);box-shadow:0 0 0 2px color-mix(in oklab,var(--dropline) 40%, transparent)}
+  .group-chip{position:absolute;transform:translateY(-50%);display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;background:var(--bg-elev);
+    border:1px solid var(--border);font-size:13px;pointer-events:auto;z-index:5}
+  .group-chip input{width:180px;max-width:40vw;padding:6px 8px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)}
+  .chip-btn{border:1px solid var(--border);background:var(--bg-elev);border-radius:999px;padding:4px 8px;cursor:pointer}
+  .chip-btn.icon{width:26px;min-width:26px;padding:4px 0;text-align:center}
+  .chip-btn:hover{background:var(--bg-hover)}
+  .group-anchor{height:24px;margin:0 0 6px 0;padding:0;border:none;background:transparent;overflow:visible}
+  .group-anchor .site-item{padding:0}
+
+  /* DROP-зоны — прямоугольники с пунктиром (компактные) */
+  .gap{height:10px;position:relative;margin:2px 0;z-index:2}
+  .gap.flat{margin-left:var(--indent)}
+  .gap::after{
+    content:"";position:absolute;inset:0;border:2px dashed var(--dropline);border-radius:10px;
+    background:color-mix(in oklab,var(--dropline) 10%, transparent);
+    opacity:0;transition:opacity .08s, border-color .08s, background .08s;
+  }
+  body.dragging .gap::after{opacity:.9}
+  body.dragging .gap.dim::after{border-color:var(--gap-dim);background:transparent;opacity:.6}
+  body.dragging .gap.hover::after{border-color:var(--dropline);background:color-mix(in oklab,var(--dropline) 16%, transparent);opacity:1}
+
+  /* Пустой корень как большая зона */
+  .drop-root{height:28px;margin:8px 0;border-radius:12px;border:2px dashed var(--dropline);
+    background:color-mix(in oklab,var(--dropline) 10%, transparent);display:none}
+  body.dragging .drop-root{display:block}
+  .drop-root.active{border-color:var(--dropline)}
+</style>
+</head>
+<body>
+<header class="app-header">
+  <div class="header-inner">
+    <div class="search"><input id="search" type="text" placeholder="Поиск по названию… (⌘/Ctrl + K)" autocomplete="off" /></div>
+    <button id="addGroup" class="btn">🧩 Добавить группу</button>
+    <button id="addSite" class="btn">➕ Добавить сайт</button>
+  </div>
+</header>
+
+<main class="container" id="container">
+  <div id="list"></div>
+  <div id="emptyRootDrop" class="drop-root" style="display:none"></div>
+  <div class="hint" style="margin-top:12px">
+    Перетаскивайте — прямоугольные пунктирные зоны между карточками подскажут место вставки. Наводите на любую зону — она синяя, остальные тускнеют.
+  </div>
+</main>
+
+<!-- Overlay -->
+<div id="overlay" class="overlay" role="dialog" aria-modal="true">
+  <div class="modal" id="modal">
+    <div class="modal-header"><span id="modalTitle"></span><button id="modalClose" class="btn ghost icon" title="Закрыть">✖️</button></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<script>
+/* ---------- helpers & constants ---------- */
+const uid=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
+function button(text, onClick, title){const b=document.createElement('button');b.className='btn';b.textContent=text;if(title)b.title=title;b.onclick=onClick;return b;}
+function child(tag, cls, txt){const el=document.createElement(tag);if(cls)el.className=cls;if(txt!=null)el.textContent=txt;return el;}
+
+const STORAGE_KEY='siteTrackerData.v39.2';
+const FAV_KEY='siteTrackerFavColors.v1';
+
+/* dates */
+const MS_DAY=86400000;
+const todayISO=()=>toISO(new Date());
+function toISO(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${da}`;}
+function parseISO(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return null;const [y,m,d]=s.split('-').map(Number);const dt=new Date(y,m-1,d);dt.setHours(0,0,0,0);return dt;}
+function normalizeISO(v){return/^\d{4}-\d{2}-\d{2}$/.test(v||'')?v:''}
+function shiftISO(iso,days){const base=iso?parseISO(iso):new Date();base.setHours(0,0,0,0);base.setDate(base.getDate()+days);return toISO(base);}
+function daysSince(iso){ if(!iso) return null; const d=parseISO(iso); if(!d) return null; const now=new Date(); now.setHours(0,0,0,0); return Math.floor((now - d)/MS_DAY); }
+function staleFlag(iso){ const n=daysSince(iso); if(n==null) return ''; if(n>60) return 'y60'; if(n>30) return 'y30'; if(n>15) return 'y15'; return ''; }
+
+/* palettes */
+const COLORS={
+  'Пастельные':['#fde2e4','#fad2e1','#e2ece9','#bee1e6','#cde7f0','#d1dce5','#f1f0c0','#f9e2ae','#ffd6a5','#ffcfdf','#c7f9cc','#bde0fe','#e2f0cb','#f1d1d1','#f6e7cb','#e7eaf6','#e3d5ff','#ffe5ec','#ffe8cc','#fff1e6','#e4f1fe','#eaf2ff','#f2e9e4','#f8edeb','#ffe5d9','#ffd7ba','#e9edc9','#cfe1b9','#a7d8f5','#c6def1','#dbcdf0','#f2c6de','#dfe7fd','#d7f7f5','#e8eaf6','#f8e1f4'],
+  'Насыщенные':['#3b82f6','#2563eb','#1d4ed8','#22c55e','#16a34a','#ef4444','#dc2626','#f97316','#eab308','#a855f7','#d946ef','#06b6d4'],
+  'Нейтральные':['#111317','#151923','#1e293b','#1f2937','#334155','#374151','#475569','#52525b','#3f3f46','#4b5563']
+};
+
+/* favorites */
+let favs=JSON.parse(localStorage.getItem(FAV_KEY)||'[]');
+const saveFavs=()=>localStorage.setItem(FAV_KEY, JSON.stringify(favs));
+function addFav(hex){if(!validHex(hex))return;hex=hex.toLowerCase();if(!favs.includes(hex)){favs.unshift(hex);if(favs.length>32)favs.pop();saveFavs();}}
+function removeFav(hex){favs=favs.filter(c=>c.toLowerCase()!==hex.toLowerCase());saveFavs();}
+function validHex(v){return/^#([0-9a-fA-F]{6})$/.test(v)}
+function normalizeHex(v){return validHex(v)?v.toLowerCase():'#151923'}
+function readableTextColor(hex){
+  if(!validHex(hex)) return getComputedStyle(document.documentElement).getPropertyValue('--text').trim()||'#e6e9ef';
+  const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex); if(!m) return '#e6e9ef';
+  const r=parseInt(m[1],16)/255,g=parseInt(m[2],16)/255,b=parseInt(m[3],16)/255;
+  const L=[r,g,b].map(u=>u<=0.03928?u/12.92:Math.pow((u+0.055)/1.055,2.4)).reduce((a,v,i)=>a+v*[0.2126,0.7152,0.0722][i],0);
+  return (1.05/(L+0.05)) >= ((L+0.05)/0.05) ? '#ffffff' : '#0b1220';
+}
+
+/* state */
+let state=JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
+if(!state.length){
+  state=[{id:uid(),kind:'group',title:'Новая группа',collapsed:false,children:[
+    {id:uid(),kind:'item',title:'Новый сайт',lastVisited:todayISO(),notes:'',bg:'',children:[
+      {id:uid(),kind:'item',title:'Новый раздел',lastVisited:'',notes:'',bg:'',children:[]}
+    ]}
+  ]}]; save();
+}
+function save(){localStorage.setItem(STORAGE_KEY, JSON.stringify(state));}
+
+/* DOM refs */
+const container=document.getElementById('container');
+const listEl=document.getElementById('list');
+const searchEl=document.getElementById('search');
+const btnAddSite=document.getElementById('addSite');
+const btnAddGroup=document.getElementById('addGroup');
+const emptyRootDrop=document.getElementById('emptyRootDrop');
+
+const editing=new Set();
+const editingGroupTitle=new Set();
+
+/* overlay / modal state */
+const overlay=document.getElementById('overlay');
+const modalTitle=document.getElementById('modalTitle');
+const modalBody=document.getElementById('modalBody');
+const modalActions=document.getElementById('modalActions');
+const modalClose=document.getElementById('modalClose');
+
+let modal={open:false,kind:null,targetId:null,tempColor:'#151923',tempDate:'',prevColor:'',committed:false};
+
+function openModal(kind,targetId,opts={}){
+  modal.open=true; modal.kind=kind; modal.targetId=targetId;
+  modal.tempColor=opts.color||'#151923';
+  modal.tempDate=normalizeISO(opts.date)||'';
+  modal.prevColor='';          // определим внутри модалки цвета
+  modal.committed=false;
+  renderModal();
+}
+function closeModal(){
+  // если модалка цвета закрывается без сохранения — откатываем предпросмотр
+  if(modal.open && modal.kind==='pick-color' && !modal.committed){
+    const node=findNode(modal.targetId);
+    if(node) applyCardTheme(node.id, node.bg || null);
+  }
+  modal.open=false;
+  overlay.classList.remove('open');
+}
+modalClose.onclick=closeModal;
+overlay.addEventListener('click',e=>{if(e.target===overlay)closeModal();});
+window.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal.open)closeModal();});
+
+function renderModal(){
+  if(!modal.open) return;
+  const node=findNode(modal.targetId); if(!node){closeModal();return;}
+  overlay.classList.add('open'); modalBody.innerHTML=''; modalActions.innerHTML='';
+
+  if(modal.kind==='confirm-delete'){
+    modalTitle.textContent='Подтвердите удаление';
+    modalBody.append(child('div','',`Удалить «${node.title||'Без названия'}»? Это действие необратимо.`));
+    const cancel=button('Отмена',closeModal);
+    const yes=button('Удалить',()=>{removeNode(node.id);save();closeModal();render();}); yes.classList.add('danger');
+    modalActions.append(cancel,yes);
+  }
+
+  if(modal.kind==='pick-color'){
+    modalTitle.textContent='Выбор цвета карточки';
+    modal.prevColor = node.bg || ''; // запомним исходный цвет
+
+    const row=document.createElement('div');row.style.display='flex';row.style.gap='10px';row.style.alignItems='center';
+    const native=document.createElement('input');native.type='color';native.value=normalizeHex(node.bg || modal.tempColor);
+    const hex=document.createElement('input');hex.value=normalizeHex(node.bg || modal.tempColor);hex.maxLength=7;hex.className='date-input';hex.style.width='120px';
+
+    native.oninput=()=>{modal.tempColor=normalizeHex(native.value);hex.value=modal.tempColor;applyCardTheme(node.id,modal.tempColor);};
+    hex.oninput=()=>{ let v=hex.value.trim(); if(v && v[0]!=='#') v='#'+v;
+      if(validHex(v)){ modal.tempColor=normalizeHex(v); native.value=modal.tempColor; applyCardTheme(node.id,modal.tempColor); }};
+
+    row.append(native,hex);modalBody.append(row);
+
+    if(favs.length){
+      const secFav=document.createElement('div');secFav.className='color-section';
+      secFav.append(child('div','section-title','Избранные'));
+      const sw=document.createElement('div');sw.className='swatches';
+      favs.forEach(c=>{const b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.onclick=()=>{modal.tempColor=c;native.value=c;hex.value=c;applyCardTheme(node.id,c);};sw.appendChild(b);});
+      secFav.append(sw);modalBody.append(secFav);
+    }
+    for(const [name,arr] of Object.entries(COLORS)){
+      const sec=document.createElement('div');sec.className='color-section';
+      sec.append(child('div','section-title',name));
+      const sw=document.createElement('div');sw.className='swatches';
+      arr.forEach(c=>{const b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.onclick=()=>{modal.tempColor=c;native.value=c;hex.value=c;applyCardTheme(node.id,c);};sw.appendChild(b);});
+      sec.append(sw);modalBody.append(sec);
+    }
+    const addStar=button('☆ В избранное',()=>{addFav(modal.tempColor);renderModal();});addStar.classList.add('ghost');
+    const reset=button('Сброс',()=>{node.bg='';applyCardTheme(node.id,null);save();});
+    const cancel=button('Отмена',closeModal);
+    const saveBtn=button('Сохранить',()=>{node.bg=modal.tempColor||'';applyCardTheme(node.id,node.bg||null);save();modal.committed=true;closeModal();render();});saveBtn.classList.add('primary');
+    modalActions.append(addStar,reset,cancel,saveBtn);
+  }
+
+  if(modal.kind==='edit-date'){
+    modalTitle.textContent='Дата последнего посещения';
+    const input=document.createElement('input');input.type='date';input.className='date-input';input.value=normalizeISO(node.lastVisited||'');
+    const quick=document.createElement('div');quick.className='date-quick';
+    quick.append(button('Сегодня',()=>{input.value=todayISO();}),
+                 button('−1 день',()=>{input.value=shiftISO(input.value||todayISO(),-1);}),
+                 button('+1 день',()=>{input.value=shiftISO(input.value||todayISO(),+1);}),
+                 button('Очистить',()=>{input.value='';}));
+    modalBody.append(input,quick);
+    const cancel=button('Отмена',closeModal);
+    const saveBtn=button('Сохранить',()=>{node.lastVisited=input.value||'';save();closeModal();render();});saveBtn.classList.add('primary');
+    modalActions.append(cancel,saveBtn);
+  }
+}
+
+/* ---------- DROP zone helpers (hover/dim sync) ---------- */
+function setHoveredGap(target){
+  document.querySelectorAll('.gap').forEach(g=>{
+    if(g===target){ g.classList.add('hover'); g.classList.remove('dim'); }
+    else { g.classList.add('dim'); g.classList.remove('hover'); }
+  });
+}
+function clearGapHover(){
+  document.querySelectorAll('.gap').forEach(g=>g.classList.remove('hover','dim'));
+}
+
+/* ---------- render ---------- */
+function render(){
+  listEl.innerHTML='';
+  const filter=(searchEl?.value||'').trim().toLowerCase();
+  const any = renderFlat(state, 0, filter, null, null);
+  emptyRootDrop.style.display = any ? 'none' : 'block';
+  if(!any){
+    installGapHandlers(emptyRootDrop, null, 0);
+  }
+  requestAnimationFrame(()=>{ drawSectionLines(); drawGroupBoxes(); });
+}
+
+/* Возвращает true, если что-то отрисовано (видимое) */
+function renderFlat(nodes, depth, filter, parentId, groupRoot){
+  const visibleEntries = nodes
+    .map((n, idx) => ({ n, idx, vis: match(n, filter) }))
+    .filter(x => x.vis);
+
+  if (visibleEntries.length === 0) return false;
+
+  // первая зона перед первым видимым
+  listEl.appendChild(makeGap(parentId, visibleEntries[0].idx, depth));
+
+  for (let k = 0; k < visibleEntries.length; k++){
+    const { n, idx } = visibleEntries[k];
+
+    const el = (n.kind === 'group')
+      ? renderGroupAnchor(n, depth, filter, parentId)
+      : renderItem(n, depth, filter, parentId, groupRoot);
+    listEl.appendChild(el);
+
+    const nextIndex = (k + 1 < visibleEntries.length) ? visibleEntries[k+1].idx : (nodes.length);
+    listEl.appendChild(makeGap(parentId, nextIndex, depth));
+
+    const nextGroupRoot = (n.kind==='group') ? n.id : groupRoot;
+    if(n.children && n.children.length && !(n.kind==='group' && n.collapsed)){
+      renderFlat(n.children, depth+1, filter, n.id, nextGroupRoot);
+    }
+  }
+  return true;
+}
+
+function match(n,f){ if(!f) return true; if((n.title||'').toLowerCase().includes(f)) return true; return (n.children||[]).some(c=>match(c,f)); }
+
+/* GAP — зона между карточками */
+function makeGap(parentId, insertIndex, depth){
+  const d=document.createElement('div');
+  d.className='gap flat';
+  d.style.setProperty('--indent', `calc(${depth} * var(--indent-step))`);
+  installGapHandlers(d, parentId, insertIndex);
+  return d;
+}
+function installGapHandlers(el, parentId, insertIndex){
+  el.addEventListener('dragover', e=>{ e.preventDefault(); setHoveredGap(el); });
+  el.addEventListener('dragleave', ()=>{/* dragover другой зоны всё починит */});
+  el.addEventListener('drop', e=>{
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if(!canDropAdjacent(draggedId, parentId)) return;
+    clearGapHover();
+    moveNode(draggedId, parentId || null, insertIndex);
+    render();
+  });
+}
+
+function renderGroupAnchor(node, depth, filter, parentId){
+  const card=document.createElement('div'); card.className='site-card flat group-anchor'; card.dataset.id=node.id; card.dataset.kind='group';
+  if(parentId) card.dataset.parent=parentId; else card.removeAttribute('data-parent');
+  card.style.setProperty('--indent', `calc(${depth} * var(--indent-step))`);
+  const item=document.createElement('div'); item.className='site-item'; card.appendChild(item);
+  return card;
+}
+
+function renderItem(node, depth, filter, parentId, groupRoot){
+  const card=document.createElement('div'); card.className='site-card flat'; card.dataset.id=node.id; card.dataset.kind='item';
+  if(parentId) card.dataset.parent=parentId; else card.removeAttribute('data-parent');
+
+  if(groupRoot){ card.dataset.groupRoot=groupRoot; card.dataset.role = (parentId===groupRoot)?'site':'section'; }
+  else { card.removeAttribute('data-group-root'); card.removeAttribute('data-role'); }
+
+  card.style.setProperty('--indent', `calc(${depth} * var(--indent-step))`);
+  const baseText=getComputedStyle(document.documentElement).getPropertyValue('--text').trim()||'#e6e9ef';
+  if(node.bg){ card.style.background=node.bg; card.style.setProperty('--card-fg', readableTextColor(node.bg)); }
+  else { card.style.background=''; card.style.setProperty('--card-fg', baseText); }
+
+  const flag=staleFlag(node.lastVisited||'');
+  if(flag) card.dataset.stale=flag; else card.removeAttribute('data-stale');
+
+  // DnD
+  card.draggable=true;
+  card.addEventListener('dragstart', e=>{
+    e.dataTransfer.setData('text/plain', node.id);
+    card.classList.add('dragging');
+    document.body.classList.add('dragging');
+    clearGapHover(); // старт — все зоны без dim
+  });
+  card.addEventListener('dragend', ()=>{
+    card.classList.remove('dragging');
+    document.body.classList.remove('dragging');
+    clearGapHover();
+  });
+
+  const item=document.createElement('div'); item.className='site-item';
+  const row=document.createElement('div'); row.className='row';
+  const date=document.createElement('input'); date.type='date'; date.className='date-input'; date.value=node.lastVisited||''; date.readOnly=true;
+  date.addEventListener('click', e=>{ e.preventDefault(); openModal('edit-date', node.id, { date: node.lastVisited || '' }); });
+
+  const main=document.createElement('div');
+  if(!editing.has(node.id)){
+    const t=document.createElement('label'); t.className='title-label'; t.textContent=node.title||'Без названия';
+    const n=document.createElement('div'); n.className='notes-label'; n.textContent=node.notes||'';
+    main.append(t,n);
+  }else{
+    const ti=document.createElement('input'); ti.className='title-input'; ti.value=node.title||'';
+    const ni=document.createElement('textarea'); ni.className='notes-input'; ni.value=node.notes||'';
+    main.append(ti,ni); main._titleInput=ti; main._notesInput=ni;
+  }
+
+  const actions=document.createElement('div'); actions.className='actions';
+  if(!editing.has(node.id)){
+    const editBtn=button('✏️',()=>{ editing.add(node.id); render(); },'Редактировать'); editBtn.classList.add('icon');
+    actions.append(editBtn);
+    row.append(date, main, actions);
+    item.append(row);
+  }else{
+    row.append(date, main); item.append(row);
+    const bottom=document.createElement('div'); bottom.className='actions-bottom';
+    const left=document.createElement('div'); left.className='actions-left';
+    const addSub=button('➕ Раздел',()=>{ node.children=node.children||[]; node.children.push({ id:uid(), kind:'item', title:'Новый раздел', lastVisited:'', notes:'', bg:'', children:[] });
+      save(); render(); });
+    const colorBtn=button('🎨 Цвет',()=>openModal('pick-color', node.id, { color: normalizeHex(node.bg || '#151923') }));
+    left.append(addSub,colorBtn);
+    const center=document.createElement('div'); center.className='actions-center';
+    const saveBtn=button('✅ Сохранить',()=>{ node.title=main._titleInput.value; node.notes=main._notesInput.value; editing.delete(node.id); save(); render(); });
+    const cancelBtn=button('✖️ Отмена',()=>{ editing.delete(node.id); render(); });
+    center.append(saveBtn,cancelBtn);
+    const right=document.createElement('div'); right.className='actions-right';
+    const delBtn=button('🗑 Удалить',()=>openModal('confirm-delete',node.id)); right.append(delBtn);
+    bottom.append(left,center,right); item.append(bottom);
+  }
+
+  card.appendChild(item);
+  return card;
+}
+
+/* ---------- вертикальные линии & группы ---------- */
+function drawSectionLines(){
+  container.querySelectorAll('.section-line').forEach(el=>el.remove());
+
+  const directByParent=new Map();
+  document.querySelectorAll('.site-card[data-role="section"]').forEach(el=>{
+    if(el.style.display==='none' || el.offsetParent===null) return;
+    const pid=el.dataset.parent; if(!pid) return;
+    if(!directByParent.has(pid)) directByParent.set(pid, []);
+    directByParent.get(pid).push(el);
+  });
+
+  const isDescendantOf=(el,parentId)=>{
+    let pid=el.dataset.parent;
+    while(pid){
+      if(pid===parentId) return true;
+      const p=document.querySelector(`.site-card[data-id="${pid}"]`);
+      if(!p) break;
+      pid=p.dataset.parent;
+    }
+    return false;
+  };
+
+  directByParent.forEach((children,parentId)=>{
+    children.sort((a,b)=>a.offsetTop-b.offsetTop);
+    const firstTop=children[0].offsetTop;
+    let lastBottom=children[children.length-1].offsetTop+children[children.length-1].offsetHeight;
+
+    // до самого глубокого потомка
+    document.querySelectorAll('.site-card[data-role="section"]').forEach(el=>{
+      if(el.style.display==='none' || el.offsetParent===null) return;
+      if(isDescendantOf(el,parentId)){
+        const b=el.offsetTop+el.offsetHeight;
+        if(b>lastBottom) lastBottom=b;
+      }
+    });
+
+    const parentEl=document.querySelector(`.site-card[data-id="${parentId}"]`);
+    if(!parentEl) return;
+    const color=getComputedStyle(parentEl).backgroundColor;
+
+    const line=document.createElement('div'); line.className='section-line';
+    line.style.left=(children[0].offsetLeft-10)+'px';
+    line.style.top=(firstTop+8)+'px';
+    line.style.height=(lastBottom-firstTop-16)+'px';
+    line.style.background=color;
+    container.appendChild(line);
+  });
+}
+
+function drawGroupBoxes(){
+  container.querySelectorAll('.group-box,.group-chip').forEach(el=>el.remove());
+
+  const groups=[];
+  walk(state,null,(node)=>{
+    if(node.kind!=='group') return;
+    const anchor=document.querySelector(`.group-anchor[data-id="${node.id}"]`);
+    if(!anchor || anchor.style.display==='none') return;
+    const kids=[...container.querySelectorAll(`.site-card[data-group-root="${node.id}"]`)]
+      .filter(el=>el.style.display!=='none' && el.offsetParent!==null);
+    const g={id:node.id,title:node.title,collapsed:!!node.collapsed,anchorLeft:anchor.offsetLeft,anchorTop:anchor.offsetTop,kids};
+    if(kids.length){
+      kids.sort((a,b)=>a.offsetTop-b.offsetTop);
+      g.left=Math.min(...kids.map(c=>c.offsetLeft));
+      g.right=Math.max(...kids.map(c=>c.offsetLeft+c.offsetWidth));
+      g.top=kids[0].offsetTop; g.bottom=kids[kids.length-1].offsetTop+kids[kids.length-1].offsetHeight;
+    }
+    groups.push(g);
+  });
+
+  groups.forEach(g=>{
+    const node=findNode(g.id);
+    if(g.kids.length && !g.collapsed){
+      const box=document.createElement('div');box.className='group-box';box.dataset.group=g.id;
+      box.style.left=(g.left-12)+'px';box.style.top=(g.top-10)+'px';
+      box.style.width=(g.right-g.left+24)+'px';box.style.height=(g.bottom-g.top+20)+'px';
+      container.appendChild(box);
+    }
+
+    const chip=document.createElement('div');chip.className='group-chip';chip.dataset.group=g.id;
+    chip.style.left=g.anchorLeft+'px';chip.style.top=(g.anchorTop+18)+'px';
+
+    const btnToggle=document.createElement('button');btnToggle.className='chip-btn icon';btnToggle.textContent=node.collapsed?'▸':'▾';
+    btnToggle.title=node.collapsed?'Развернуть':'Свернуть';
+    btnToggle.onclick=()=>{node.collapsed=!node.collapsed;save();render();};
+
+    if(!editingGroupTitle.has(g.id)){
+      const btnEdit=document.createElement('button');btnEdit.className='chip-btn icon';btnEdit.textContent='✏️';btnEdit.title='Переименовать';
+      btnEdit.onclick=()=>{editingGroupTitle.add(g.id);drawGroupBoxes();};
+      const title=document.createElement('span');title.textContent=node.title||'Группа';
+
+      const btnAdd=document.createElement('button');btnAdd.className='chip-btn icon';btnAdd.textContent='➕';btnAdd.title='Добавить сайт';
+      btnAdd.onclick=()=>{node.children=node.children||[];node.children.push({id:uid(),kind:'item',title:'Новый сайт',lastVisited:'',notes:'',bg:'',children:[]});save();render();};
+
+      const btnDel=document.createElement('button');btnDel.className='chip-btn icon';btnDel.textContent='🗑';btnDel.title='Удалить группу';
+      btnDel.onclick=()=>openModal('confirm-delete',g.id);
+
+      chip.append(btnToggle,btnEdit,title,btnAdd,btnDel);
+    }else{
+      const input=document.createElement('input');input.value=node.title||'';input.placeholder='Название группы';
+      const ok=document.createElement('button');ok.className='chip-btn';ok.textContent='✓';
+      const cancel=document.createElement('button');cancel.className='chip-btn';cancel.textContent='✕';
+      const doSave=()=>{node.title=input.value.trim()||'Группа';editingGroupTitle.delete(g.id);save();drawGroupBoxes();};
+      const doCancel=()=>{editingGroupTitle.delete(g.id);drawGroupBoxes();};
+      input.onkeydown=(e)=>{if(e.key==='Enter')doSave();if(e.key==='Escape')doCancel();};
+      ok.onclick=doSave;cancel.onclick=doCancel;
+      chip.append(btnToggle,input,ok,cancel);setTimeout(()=>input.focus(),0);
+    }
+
+    chip.addEventListener('dragover',e=>{e.preventDefault();const box=document.querySelector(`.group-box[data-group="${g.id}"]`);if(box)box.classList.add('glow');});
+    chip.addEventListener('dragleave',()=>{const box=document.querySelector(`.group-box[data-group="${g.id}"]`);if(box)box.classList.remove('glow');});
+    chip.addEventListener('drop',e=>{
+      e.preventDefault();const box=document.querySelector(`.group-box[data-group="${g.id}"]`);if(box)box.classList.remove('glow');
+      const draggedId=e.dataTransfer.getData('text/plain');if(!canDropInto(draggedId,g.id))return;
+      moveNode(draggedId,g.id,(node.children?node.children.length:0));render();
+    });
+
+    container.appendChild(chip);
+  });
+}
+
+/* ---------- data helpers ---------- */
+function getParentInfo(id){
+  let res=null;(function walk(arr,pid){for(let i=0;i<arr.length;i++){const n=arr[i];if(n.id===id){res={parentArr:arr,parentId:pid,index:i};return;}if(n.children&&n.children.length){walk(n.children,n.id);if(res)return;}}})(state,null);return res;
+}
+function isAncestor(ancestorId,nodeId){
+  let yes=false;(function walk(arr,pid){for(const n of arr){if(n.id===nodeId&&pid===ancestorId){yes=true;return;}if(n.children&&n.children.length){walk(n.children,n.id);if(yes)return;}}})(state,null);return yes;
+}
+function canDropInto(draggedId,targetGroupId){if(draggedId===targetGroupId)return false;return !isAncestor(draggedId,targetGroupId);}
+function canDropAdjacent(draggedId,parentId){if(!parentId)return true;return !isAncestor(draggedId,parentId);}
+function moveNode(nodeId,newParentId,newIndex){
+  if(nodeId===newParentId)return;
+  const info=getParentInfo(nodeId); if(!info) return;
+  const node=info.parentArr.splice(info.index,1)[0];
+  const destArr=newParentId?(findNode(newParentId)?.children||(findNode(newParentId).children=[])):state;
+  const idx=Math.max(0,Math.min(newIndex,destArr.length));destArr.splice(idx,0,node);save();
+}
+function walk(arr,pid,fn){for(const n of arr){fn(n,pid);if(n.children&&n.children.length)walk(n.children,n.id,fn);}}
+function removeNode(id){function inner(arr){const i=arr.findIndex(x=>x.id===id);if(i!==-1){arr.splice(i,1);return true;}for(const it of arr)if(it.children&&inner(it.children))return true;return false;}inner(state);}
+function findNode(id){let found=null;(function inner(arr){for(const it of arr){if(it.id===id){found=it;return;}if(it.children)inner(it.children);if(found)return;}})(state);return found;}
+
+/* ---------- UI ---------- */
+btnAddSite.onclick=()=>{state.unshift({id:uid(),kind:'item',title:'Новый сайт',lastVisited:'',notes:'',bg:'',children:[]});save();render();};
+btnAddGroup.onclick=()=>{state.unshift({id:uid(),kind:'group',title:'Новая группа',collapsed:false,children:[]});save();render();};
+searchEl.addEventListener('input', ()=>render());
+window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();searchEl.focus();searchEl.select();}});
+window.addEventListener('resize', ()=>{ drawSectionLines(); drawGroupBoxes(); });
+
+/* apply theme for preview/save */
+function applyCardTheme(id,color){
+  const el=document.querySelector(`[data-id="${id}"]`); if(!el) return;
+  if(color){ el.style.background=color; el.style.setProperty('--card-fg', readableTextColor(color)); }
+  else { el.style.background=''; el.style.setProperty('--card-fg', getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e6e9ef'); }
+}
+
+render();
+</script>
+</body>
+</html>
